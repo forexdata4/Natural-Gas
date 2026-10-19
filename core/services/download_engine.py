@@ -141,6 +141,22 @@ class DownloadEngine:
             return response.content, fetch_ms
         if status == 404:
             return None, fetch_ms
+        if status == 202:
+            # 202 means the server accepted the request but has not necessarily
+            # returned the requested tick payload. Do not treat it as an empty
+            # hour or try to decode it as tick JSON. Include response metadata
+            # in the error so API-side changes can be diagnosed from the log.
+            body_preview = response.text[:500].replace("\\r", " ").replace("\\n", " ")
+            details = [f"HTTP 202 Accepted from JETTA"]
+            retry_after = response.headers.get("Retry-After")
+            location = response.headers.get("Location")
+            if retry_after:
+                details.append(f"Retry-After={retry_after}")
+            if location:
+                details.append(f"Location={location}")
+            if body_preview:
+                details.append(f"body={body_preview!r}")
+            raise RetryableError("; ".join(details))
         if status == 429:
             raise RateLimitError("HTTP 429", _retry_after_seconds(response))
         if status in _RETRYABLE_HTTP:
