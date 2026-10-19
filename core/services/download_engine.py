@@ -141,6 +141,35 @@ class DownloadEngine:
             return response.content, fetch_ms
         if status == 404:
             return None, fetch_ms
+        if status == 202:
+            # JETTA's CloudFront/WAF challenge is not a tick payload. Retrying
+            # the same request cannot solve a browser challenge, so fail fast
+            # with actionable diagnostics instead of repeating every hour.
+            waf_action = response.headers.get("x-amzn-waf-action", "").lower()
+            if waf_action == "challenge":
+                request_id = response.headers.get("x-amz-cf-id")
+                details = [
+                    "JETTA returned HTTP 202 with AWS WAF challenge; "
+                    "no tick data was returned. This request needs to be "
+                    "allowed by Dukascopy's security policy before the downloader can work."
+                ]
+                if request_id:
+                    details.append(f"CloudFront request ID={request_id}")
+                raise PermanentError("; ".join(details))
+
+            # Other 202 responses may be asynchronous or intermediary responses.
+            # Do not treat them as an empty hour or valid tick payload.
+            body_preview = response.text[:500].replace(chr(13), " ").replace(chr(10), " ")
+            details = ["HTTP 202 Accepted from JETTA"]
+            retry_after = response.headers.get("Retry-After")
+            location = response.headers.get("Location")
+            if retry_after:
+                details.append(f"Retry-After={retry_after}")
+            if location:
+                details.append(f"Location={location}")
+            if body_preview:
+                details.append(f"body={body_preview!r}")
+            raise RetryableError("; ".join(details))
         if status == 429:
             raise RateLimitError("HTTP 429", _retry_after_seconds(response))
         if status in _RETRYABLE_HTTP:
