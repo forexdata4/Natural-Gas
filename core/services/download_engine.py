@@ -146,7 +146,7 @@ class DownloadEngine:
             # returned the requested tick payload. Do not treat it as an empty
             # hour or try to decode it as tick JSON. Include response metadata
             # in the error so API-side changes can be diagnosed from the log.
-            body_preview = response.text[:500].replace("\\r", " ").replace("\\n", " ")
+            body_preview = response.text[:500].replace(chr(13), " ").replace(chr(10), " ")
             details = [f"HTTP 202 Accepted from JETTA"]
             retry_after = response.headers.get("Retry-After")
             location = response.headers.get("Location")
