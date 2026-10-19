@@ -142,12 +142,25 @@ class DownloadEngine:
         if status == 404:
             return None, fetch_ms
         if status == 202:
-            # 202 means the server accepted the request but has not necessarily
-            # returned the requested tick payload. Do not treat it as an empty
-            # hour or try to decode it as tick JSON. Include response metadata
-            # in the error so API-side changes can be diagnosed from the log.
+            # JETTA's CloudFront/WAF challenge is not a tick payload. Retrying
+            # the same request cannot solve a browser challenge, so fail fast
+            # with actionable diagnostics instead of repeating every hour.
+            waf_action = response.headers.get("x-amzn-waf-action", "").lower()
+            if waf_action == "challenge":
+                request_id = response.headers.get("x-amz-cf-id")
+                details = [
+                    "JETTA returned HTTP 202 with AWS WAF challenge; "
+                    "no tick data was returned. This request needs to be "
+                    "allowed by Dukascopy's security policy before the downloader can work."
+                ]
+                if request_id:
+                    details.append(f"CloudFront request ID={request_id}")
+                raise PermanentError("; ".join(details))
+
+            # Other 202 responses may be asynchronous or intermediary responses.
+            # Do not treat them as an empty hour or valid tick payload.
             body_preview = response.text[:500].replace(chr(13), " ").replace(chr(10), " ")
-            details = [f"HTTP 202 Accepted from JETTA"]
+            details = ["HTTP 202 Accepted from JETTA"]
             retry_after = response.headers.get("Retry-After")
             location = response.headers.get("Location")
             if retry_after:
